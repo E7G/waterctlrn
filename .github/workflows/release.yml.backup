@@ -1,0 +1,167 @@
+name: Build and Release
+on:
+  push:
+    branches:
+      - 2.x
+  workflow_dispatch:
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    outputs:
+      next_release_tag: ${{ steps.generate_release_tag.outputs.next_release_tag }}
+    steps:
+      - name: Generate release tag
+        id: generate_release_tag
+        uses: amitsingh-007/next-release-tag@v6.0.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          tag_prefix: "v"
+          tag_template: "yyyy.mm.dd.i"
+
+  build:
+    needs: prepare
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+        include:
+          - os: macos-latest
+            arch: x64 # 或 arm64
+            dn: mac
+          - os: windows-latest
+            arch: x64
+            dn: win
+          - os: ubuntu-latest
+            arch: x64
+            dn: linux
+    runs-on: ${{ matrix.os }}
+
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 确保获取完整提交历史
+
+      - name: Setup Node.js
+        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # tag: v4.2.0
+        with:
+          node-version: lts/*
+
+      - name: Install WASM Tools
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get install -y wabt
+
+      - name: Install Dependencies
+        run: |
+          npm install
+
+      # - name: Replace electron with electron-nightly
+      #   run: |
+      #     npm uninstall --save-dev electron
+      #     npm install --save-dev electron-nightly@latest
+      #   shell: bash
+
+      # - name: Pre-download Electron
+      #   shell: bash
+      #   run: |
+      #     case "${{ runner.os }}" in
+      #       macOS)
+      #         ELECTRON_PLATFORM="darwin"
+      #         ELECTRON_CACHE_DIR="$HOME/Library/Caches/electron"
+      #         ;;
+      #       Windows)
+      #         ELECTRON_PLATFORM="win32"
+      #         ELECTRON_CACHE_DIR="$env:APPDATA/../Local/electron/Cache"
+      #         ;;
+      #       Linux)
+      #         ELECTRON_PLATFORM="linux"
+      #         ELECTRON_CACHE_DIR="$HOME/.cache/electron"
+      #         ;;
+      #     esac
+      # ELECTRON_VERSION=$(node -p "require('./package.json').devDependencies.electron" | sed 's/[^0-9.]//g')
+      # MIRROR_URL="https://npmmirror.com/mirrors/electron/v$ELECTRON_VERSION/electron-v$ELECTRON_VERSION-$ELECTRON_PLATFORM-x64.zip"
+      # case "${{ runner.os }}" in
+      #   macOS|Linux)
+      #     mkdir -p "$ELECTRON_CACHE_DIR"
+      #     curl -L "$MIRROR_URL" -o "$ELECTRON_CACHE_DIR/electron.zip"
+      #     unzip -oq "$ELECTRON_CACHE_DIR/electron.zip" -d "$ELECTRON_CACHE_DIR"
+      #     rm -f "$ELECTRON_CACHE_DIR/electron.zip"
+      #     ;;
+      #   Windows)
+      #     mkdir -p "$ELECTRON_CACHE_DIR"
+      #     curl -L "$MIRROR_URL" -o "$ELECTRON_CACHE_DIR/electron.zip"
+      #     unzip -oq "$ELECTRON_CACHE_DIR/electron.zip" -d "$ELECTRON_CACHE_DIR"
+      #     rm -f "$ELECTRON_CACHE_DIR/electron.zip"
+      #     ;;
+      # esac
+
+      - name: Build Project
+        run: |
+          npm run build
+      #   env:
+      #     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # 使用 GitHub 自动生成的 Token
+
+      # - name: Upload Artifacts
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: packages-${{ runner.os }}
+      #     path: |
+      #       ./release/${{  matrix.dn }}/${{ matrix.arch }}/*
+      #       !**/*.blockmap
+
+      - name: build-linux
+        if: matrix.os == 'ubuntu-latest'
+        run: npm run build:linux
+
+      - name: build-mac
+        if: matrix.os == 'macos-latest'
+        run: npm run build:mac
+
+      - name: build-win
+        if: matrix.os == 'windows-latest'
+        run: npm run build:win
+
+      # - name: Electron-builder compiler action
+      #   uses: daltonmenezes/action-electron-builder@v1.0.1
+      #   with:
+      #     # GitHub token, automatically provided to the action
+      #     # (Optional)
+      #     github_token: ${{ secrets.github_token }}
+      #     args: "--publish always"
+
+      - name: Upload Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ needs.prepare.outputs.next_release_tag }}
+          tag_name: ${{ needs.prepare.outputs.next_release_tag }}
+          token: ${{secrets.GITHUB_TOKEN}}
+          draft: false
+          preserve_order: true
+          generate_release_notes: true
+          prerelease: false
+          files: |
+            release/*.dmg
+            release/*.zip
+            release/*.exe
+            release/*.msi
+            release/*.AppImage
+            release/*.rpm
+            release/*.deb
+            release/*.snap
+            release/*.tar.gz
+            release/*.tar.xz
+            release/*.pacman
+            release/squirrel-windows/*.exe
+            release/squirrel-windows/*.nupkg
+            release/nsis-web/*.exe
+            release/nsis-web/*.7z
+
+        env:
+          GH_TOKEN: ${{ secrets.github_token }}
